@@ -4,13 +4,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from .database import get_session, engine, SessionLocal
-from .models import Base, JobPosting, Lead
-from .schemas import JobBase, LeadIn, LeadOut
-from .crud import upsert_job, create_or_update_lead
-from .settings import settings
-from .providers.arbetsformedlingen import AFProvider
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from typing import List
 import csv
 import io
@@ -19,11 +12,19 @@ import os
 import re
 import logging
 
+from .database import get_session, engine, SessionLocal
+from .models import Base, JobPosting, Lead
+from .schemas import JobBase, LeadIn, LeadOut
+from .crud import upsert_job, create_or_update_lead
+from .settings import settings
+from .providers.arbetsformedlingen import AFProvider
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Platsannons-aggregator")
 
-# CORS (ok att strama åt senare)
+# CORS (backend serverar även frontend, men låt vara öppet vid test)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,14 +33,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Skapa tabeller vid start
+# Skapa DB-tabeller
 Base.metadata.create_all(bind=engine)
 
-# Datakällor
+# Datakällor (lägg fler senare)
 providers = [AFProvider()]
 
-# Rekryteringsfilter
-recruiter_re = re.compile(r"|".join(map(re.escape, settings.recruiter_keywords)), re.I) if settings.recruiter_keywords else None
+# --------- Hjälp: filtrera bort rekryteringsföretag ---------
+recruiter_re = re.compile(
+    r"|".join(map(re.escape, settings.recruiter_keywords)), re.I
+) if settings.recruiter_keywords else None
 
 def is_recruiter(name: str, description: str) -> bool:
     if not recruiter_re:
@@ -47,44 +50,67 @@ def is_recruiter(name: str, description: str) -> bool:
     text = f"{name or ''} {description or ''}"
     return bool(recruiter_re.search(text))
 
-# Enkel auth via åtkomstkod
+# --------- Enkel auth: delad åtkomstkod i Authorization: Bearer <kod> ---------
 async def require_auth(authorization: str | None = Header(default=None)):
+    # Om ACCESS_TOKEN är tomt är auth avstängd
     if not settings.access_token:
-        return  # auth avstängd
+        return
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Auth required")
     token = authorization.split(" ", 1)[1]
     if token != settings.access_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-# Scheduler + insamling
+# --------- Insamling (scheduler + manuell trigger) ---------
 scheduler = AsyncIOScheduler()
 
 async def run_harvest():
+    """
+    Kör alla providers, spara jobb till DB och logga hur många som sparades.
+    Returnerar en dict {provider_namn: antal}.
+    """
+    counts: dict[str, int | str] = {}
+
     async def handle_provider(p):
+        n = 0
         try:
             async for job in p.fetch({}):
-                # använd en riktig Session här (inte FastAPI dependency)
                 with SessionLocal() as db:
                     upsert_job(db, p.name, job)
+                    n += 1
+            counts[p.name] = n
+            logger.info(f"HARVEST: {p.name} saved {n} jobs")
         except Exception as e:
+            counts[p.name] = f"error: {e!r}"
             logger.exception(f"Provider {p.name} failed: {e}")
+
+    await asyncio.gather(*(handle_provider(p) for p in providers))
+    return counts
 
 @app.on_event("startup")
 async def startup_event():
+    # Försök hämta direkt vid start men låt appen starta även om något felar
     try:
         await run_harvest()
     except Exception as e:
         logger.exception(f"Harvest on startup failed: {e}")
+    # Schemalägg daglig körning 03:00
     scheduler.add_job(run_harvest, "cron", hour=3, minute=0)
     scheduler.start()
 
-# Healthcheck
+# Admin-trigger för att köra insamling NU (GET och POST för enkelhet). Kräver inloggning.
+@app.get("/api/admin/harvest", dependencies=[Depends(require_auth)])
+@app.post("/api/admin/harvest", dependencies=[Depends(require_auth)])
+async def trigger_harvest():
+    counts = await run_harvest()
+    return {"ok": True, "counts": counts}
+
+# --------- Health ---------
 @app.get("/api/health")
 async def health():
     return {"ok": True}
 
-# API: jobb
+# --------- API: Jobb ---------
 @app.get("/api/jobs", response_model=List[JobBase], dependencies=[Depends(require_auth)])
 async def list_jobs(
     roles: List[str] = Query(default=[]),
@@ -106,7 +132,7 @@ async def list_jobs(
         rows = [r for r in rows if not is_recruiter(r.employer, r.description)]
     return rows
 
-# API: leads
+# --------- API: Leads ---------
 @app.post("/api/leads", response_model=LeadOut, dependencies=[Depends(require_auth)])
 async def save_lead(payload: LeadIn, db: Session = Depends(get_session)):
     lead = create_or_update_lead(db, payload.job_id, payload.tier, payload.notes)
@@ -129,17 +155,25 @@ async def export_leads(db: Session = Depends(get_session)):
     writer = csv.writer(buf)
     writer.writerow(["tier", "notes", "title", "employer", "city", "region", "published_at", "url"])
     for lead, job in rows:
-        writer.writerow([lead.tier, lead.notes, job.title, job.employer, job.city, job.region, job.published_at.isoformat(), job.url])
+        writer.writerow([
+            lead.tier, lead.notes, job.title, job.employer,
+            job.city, job.region, job.published_at.isoformat(), job.url
+        ])
     csv_data = buf.getvalue()
-    return Response(content=csv_data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=leads.csv"})
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=leads.csv"}
+    )
 
-# ---- Static frontend (servera byggd Vite-dist) ----
-# Dockerfile kopierar frontenden till /app/static
+# --------- Static frontend (Vite build) ---------
+# Dockerfile kopierar /fe/dist till /app/static
 static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 if os.path.isdir(static_dir):
+    # /assets (JS/CSS) mappas direkt
     app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
 
-# SPA-fallback: alla okända vägar -> index.html
+# SPA-fallback: alla okända rutter -> index.html
 @app.get("/{full_path:path}")
 async def spa(full_path: str):
     index_path = os.path.join(static_dir, "index.html")
