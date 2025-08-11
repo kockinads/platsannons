@@ -1,0 +1,30 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: jobs
+    ports:
+      - "5432:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg2://app:app@db:5432/jobs
+      AF_BASE_URL: https://jobsearch.api.jobtechdev.se
+      AF_USER_AGENT: platsannons-aggregator/1.0 (kontakt@example.com)
+      RECRUITER_KEYWORDS: bemanning,rekrytering,rekryteringsbyrå,rekryteringsföretag,staffing,consultant,headhunt
+      ACCESS_TOKEN: KOCKIN2025
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+volumes:
+  dbdata:
