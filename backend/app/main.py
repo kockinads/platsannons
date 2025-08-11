@@ -76,8 +76,9 @@ async def run_harvest():
         try:
             async for job in p.fetch({}):
                 with SessionLocal() as db:
-                    upsert_job(db, p.name, job)
-                    n += 1
+                    saved = upsert_job(db, p.name, job)
+                    if saved:
+                        n += 1
             counts[p.name] = n
             logger.info(f"HARVEST: {p.name} saved {n} jobs")
         except Exception as e:
@@ -98,7 +99,7 @@ async def startup_event():
     scheduler.add_job(run_harvest, "cron", hour=3, minute=0)
     scheduler.start()
 
-# Admin-trigger för att köra insamling NU (GET och POST för enkelhet). Kräver inloggning.
+# Admin-trigger för att köra insamling NU (GET och POST). Kräver inloggning.
 @app.get("/api/admin/harvest", dependencies=[Depends(require_auth)])
 @app.post("/api/admin/harvest", dependencies=[Depends(require_auth)])
 async def trigger_harvest():
