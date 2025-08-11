@@ -10,5 +10,6 @@ class Settings(BaseModel):
         "bemanning,rekrytering,rekryteringsbyrå,rekryteringsföretag,staffing,consultant,headhunt"
     ).split(",") if s.strip()]
     access_token: str = os.getenv("ACCESS_TOKEN", "")  # tomt = ingen inloggning
+    jobtech_api_key: str = os.getenv("JOBTECH_API_KEY", "")
 
 settings = Settings()
