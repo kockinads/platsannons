@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from .database import get_session, engine
+from .database import get_session, engine, SessionLocal
 from .models import Base, JobPosting, Lead
 from .schemas import JobBase, LeadIn, LeadOut
 from .crud import upsert_job, create_or_update_lead
@@ -17,9 +17,13 @@ import io
 import asyncio
 import os
 import re
+import logging
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Platsannons-aggregator")
 
+# CORS (ok att strama åt senare)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,9 +32,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Skapa tabeller vid start
 Base.metadata.create_all(bind=engine)
+
+# Datakällor
 providers = [AFProvider()]
 
+# Rekryteringsfilter
 recruiter_re = re.compile(r"|".join(map(re.escape, settings.recruiter_keywords)), re.I) if settings.recruiter_keywords else None
 
 def is_recruiter(name: str, description: str) -> bool:
@@ -39,34 +47,44 @@ def is_recruiter(name: str, description: str) -> bool:
     text = f"{name or ''} {description or ''}"
     return bool(recruiter_re.search(text))
 
+# Enkel auth via åtkomstkod
 async def require_auth(authorization: str | None = Header(default=None)):
     if not settings.access_token:
-        return
+        return  # auth avstängd
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Auth required")
     token = authorization.split(" ", 1)[1]
     if token != settings.access_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
+# Scheduler + insamling
 scheduler = AsyncIOScheduler()
 
 async def run_harvest():
     async def handle_provider(p):
-        async for job in p.fetch({}):
-            with get_session() as db:
-                upsert_job(db, p.name, job)
-    await asyncio.gather(*(handle_provider(p) for p in providers))
+        try:
+            async for job in p.fetch({}):
+                # använd en riktig Session här (inte FastAPI dependency)
+                with SessionLocal() as db:
+                    upsert_job(db, p.name, job)
+        except Exception as e:
+            logger.exception(f"Provider {p.name} failed: {e}")
 
 @app.on_event("startup")
 async def startup_event():
-    await run_harvest()
+    try:
+        await run_harvest()
+    except Exception as e:
+        logger.exception(f"Harvest on startup failed: {e}")
     scheduler.add_job(run_harvest, "cron", hour=3, minute=0)
     scheduler.start()
 
+# Healthcheck
 @app.get("/api/health")
 async def health():
     return {"ok": True}
 
+# API: jobb
 @app.get("/api/jobs", response_model=List[JobBase], dependencies=[Depends(require_auth)])
 async def list_jobs(
     roles: List[str] = Query(default=[]),
@@ -88,6 +106,7 @@ async def list_jobs(
         rows = [r for r in rows if not is_recruiter(r.employer, r.description)]
     return rows
 
+# API: leads
 @app.post("/api/leads", response_model=LeadOut, dependencies=[Depends(require_auth)])
 async def save_lead(payload: LeadIn, db: Session = Depends(get_session)):
     lead = create_or_update_lead(db, payload.job_id, payload.tier, payload.notes)
@@ -114,11 +133,13 @@ async def export_leads(db: Session = Depends(get_session)):
     csv_data = buf.getvalue()
     return Response(content=csv_data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=leads.csv"})
 
-# Static frontend
+# ---- Static frontend (servera byggd Vite-dist) ----
+# Dockerfile kopierar frontenden till /app/static
 static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 if os.path.isdir(static_dir):
     app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
 
+# SPA-fallback: alla okända vägar -> index.html
 @app.get("/{full_path:path}")
 async def spa(full_path: str):
     index_path = os.path.join(static_dir, "index.html")
