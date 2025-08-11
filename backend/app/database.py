@@ -9,7 +9,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 class Base(DeclarativeBase):
     pass
 
-# FastAPI-dependency: returnerar en riktig Session (inte en context manager)
+# FastAPI dependency: yieldar en riktig Session (inte context manager)
 def get_session() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
