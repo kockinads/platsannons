@@ -115,7 +115,7 @@ async def export_leads(db: Session = Depends(get_session)):
     return Response(content=csv_data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=leads.csv"})
 
 # Static frontend
-static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "static"))
+static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 if os.path.isdir(static_dir):
     app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
 
