@@ -17,13 +17,13 @@ class AFProvider(JobProvider):
         region = query.get("region")
         municipality = query.get("city")
 
-        params = {"q": q, "limit": 200}
+        params = {"q": q, "limit": 100}
         if region:
             params["region"] = region
         if municipality:
             params["municipality"] = municipality
 
-        headers = {"User-Agent": settings.af_user_agent}
+        headers = {"User-Agent": settings.af_user_agent, "Accept": "application/json"}
         url = f"{settings.af_base_url}/search"
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(url, params=params, headers=headers)
