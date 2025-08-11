@@ -4,6 +4,7 @@ from . import models
 from datetime import datetime
 import logging
 import re
+import json
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -24,6 +25,20 @@ def _clip(s: str | None, n: int) -> str:
     s = s.strip()
     return s if len(s) <= n else s[: n - 1]
 
+def _to_text(value) -> str:
+    """Säkerställ att description (och ev andra värden) blir ren sträng."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        # För säkerhets skull – gör om till JSON-sträng om provider inte redan flattenat
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return str(value)
+    return str(value)
+
 # --- Jobb ---
 
 def upsert_job(db: Session, source: str, job: dict) -> models.JobPosting | None:
@@ -33,7 +48,7 @@ def upsert_job(db: Session, source: str, job: dict) -> models.JobPosting | None:
     city = _clip(job.get("city") or "", MAX_CITY)
     region = _clip(job.get("region") or "", MAX_CITY)  # region-kolumnen är 200 i modellen
     url = _clip(job.get("url") or "", MAX_URL)
-    description = job.get("description") or ""
+    description = _to_text(job.get("description"))  # <--- tvinga till sträng
 
     published_at = job.get("published_at")
     if not isinstance(published_at, datetime):
@@ -80,7 +95,7 @@ def upsert_job(db: Session, source: str, job: dict) -> models.JobPosting | None:
 
 # --- Leads ---
 
-def create_or_update_lead(db: Session, job_id: int, tier: str | None, notes: str | None) -> models.Lead:
+def create_or_update_lead(db: Session, job_id: int, tier: str | None, notes: str | None):
     stmt = select(models.Lead).where(models.Lead.job_id == job_id)
     lead = db.execute(stmt).scalars().first()
     if lead:
