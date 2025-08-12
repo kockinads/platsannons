@@ -131,3 +131,16 @@ class AFProvider:
                 "description": desc_text,
                 "url": (hit.get("application_details") or {}).get("url") or hit.get("webpage_url") or "",
             }
+
+# --- Compat shim för main.py som väntar sig module-level fetch() ---
+_provider = AFProvider()
+
+async def fetch(query: dict | None = None):
+    """
+    Returnerar en lista med jobb (inte async iterator) så att main.py
+    kan köra: jobs = await arbetsformedlingen.fetch(...)
+    """
+    results = []
+    async for job in _provider.fetch(query or {}):
+        results.append(job)
+    return results
