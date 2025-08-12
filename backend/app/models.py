@@ -1,34 +1,34 @@
-from sqlalchemy import Integer, String, DateTime, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
-from datetime import datetime
+from sqlalchemy import Column, Integer, String, DateTime, UniqueConstraint
 from .database import Base
 
-class JobPosting(Base):
-    __tablename__ = "job_postings"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    source: Mapped[str] = mapped_column(String(50), index=True)
-    external_id: Mapped[str] = mapped_column(String(100), index=True)
-    title: Mapped[str] = mapped_column(String(300), index=True)
-    employer: Mapped[str] = mapped_column(String(300), index=True)
-    city: Mapped[str] = mapped_column(String(200), index=True)
-    region: Mapped[str] = mapped_column(String(200), index=True)
-    published_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-    description: Mapped[str] = mapped_column(Text)
-    url: Mapped[str] = mapped_column(String(1000))
-    title_norm: Mapped[str] = mapped_column(String(300), index=True)
-    employer_norm: Mapped[str] = mapped_column(String(300), index=True)
-    city_norm: Mapped[str] = mapped_column(String(200), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+class Job(Base):
+    __tablename__ = "jobs"
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String, index=True, nullable=False)
+    external_id = Column(String, index=True, nullable=False)
+
+    title = Column(String, nullable=False, default="")
+    employer = Column(String, nullable=False, default="")
+    city = Column(String, nullable=False, default="")
+    region = Column(String, nullable=False, default="")
+    url = Column(String, nullable=False, default="")
+    description = Column(String, nullable=False, default="")
+    published_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("title_norm", "employer_norm", "city_norm", "published_at", name="uq_job_dedupe"),
+        UniqueConstraint("provider", "external_id", name="uq_provider_external"),
     )
 
-class Lead(Base):
-    __tablename__ = "leads"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    job_id: Mapped[int] = mapped_column(Integer, index=True)
-    tier: Mapped[str] = mapped_column(String(1), default="U")  # A/B/C/U
-    notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "provider": self.provider,
+            "external_id": self.external_id,
+            "title": self.title,
+            "employer": self.employer,
+            "city": self.city,
+            "region": self.region,
+            "url": self.url,
+            "description": self.description,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+        }
