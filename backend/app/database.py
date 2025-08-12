@@ -1,18 +1,11 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase, Session
-from typing import Generator
-from .settings import settings
+from sqlalchemy.orm import sessionmaker, declarative_base
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+DATABASE_URL = "sqlite:///./platsannons.db"  # byt till Postgres-url på Render om du vill
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-class Base(DeclarativeBase):
-    pass
-
-# FastAPI dependency: yieldar en riktig Session (inte context manager)
-def get_session() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+Base = declarative_base()
