@@ -1,11 +1,17 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+# File: backend/app/database.py
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import text
+from .settings import settings
 
-DATABASE_URL = "sqlite:///./platsannons.db"  # byt till Postgres-url på Render om du vill
+# Skapar databasmotorn
+engine = create_async_engine(settings.database_url, future=True, echo=settings.debug)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
+
+async def init_db():
+    # Enkel kontroll av databasanslutning
+    async with engine.begin() as conn:
+        await conn.execute(text("SELECT 1"))
