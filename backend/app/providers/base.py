@@ -1,20 +1,20 @@
-from typing import AsyncIterator, Dict, Any
+from typing import Dict, List
 
-class JobProvider:
-    name = "base"
-    async def fetch(self, query: dict) -> AsyncIterator[Dict[str, Any]]:
-        raise NotImplementedError
-
-ROLE_KEYWORDS = {
-    "kock": ["kock", "chef"],
-    "köksbiträde": ["köksbiträde", "kitchen assistant"],
-    "diskpersonal": ["diskare", "diskpersonal", "steward"],
-    "serveringspersonal": ["servitör", "servitris", "serveringspersonal", "waiter", "waitress", "server"],
-    "bartender": ["bartender", "bar"],
-    "roddare": ["roddare", "runner"],
-    "hovmästare": ["hovmästare", "maitre", "maître", "head waiter"],
-    "köksmästare": ["köksmästare", "head chef", "chef de cuisine"],
-    "souschef": ["souschef", "sous chef"],
-    "1:e kock": ["förstekock", "1:e kock", "first cook"],
-    "1:e servis": ["försteservis", "1:e servis", "head waiter"],
+# Kartläggning från frontendens "roller" till sökord vi skickar till AF
+# (Du kan gärna utöka listorna senare.)
+ROLE_KEYWORDS: Dict[str, List[str]] = {
+    "kock": [
+        "kock", "kockar", "restaurangkock", "köksbiträde", "köksmästare",
+        "kökschef", "souschef", "1:e kock", "förstekock", "commis", "kallskänk",
+        "kallskänka", "kökspersonal", "matlagning", "restaurangkök", "varmkök", "kallkök",
+        "pizzabagare", "pizzabagare sökes", "pizzabakare"
+    ],
+    "servis": [
+        "servitör", "servitris", "serveringspersonal", "hovmästare", "sommelier",
+        "bartender", "barpersonal", "barchef", "restaurangchef", "restaurangvärd",
+        "restaurangvärdinna"
+    ],
+    "bartender": ["bartender", "barpersonal", "barchef", "mixologist"],
+    "pizzabagare": ["pizzabagare", "pizzabakare"],
+    # Lägg fler nycklar/roller om du vill exponera dem i UI:t
 }
