@@ -8,3 +8,5 @@ python-dateutil==2.9.0
 APScheduler==3.10.4
 python-multipart==0.0.9
 starlette==0.37.2
+pydantic-settings>=2.1.0
+aiosqlite>=0.20.0
