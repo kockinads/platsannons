@@ -8,14 +8,7 @@ import logging
 
 log = logging.getLogger("uvicorn.error")
 
-# --- Hjälpfunktioner ---
-
 def _flatten_description(hit: Dict[str, Any]) -> str:
-    """
-    AF:s API returnerar ofta description som ett dict:
-      { "text": "...", "company_information": "...", "needs": "...", ... }
-    Vi syr ihop alla strängfält till en enda text.
-    """
     desc = hit.get("description")
     if isinstance(desc, dict):
         parts: List[str] = []
@@ -32,7 +25,6 @@ def _parse_published(dt_str: str | None) -> datetime:
     if not dt_str:
         return datetime.utcnow()
     try:
-        # ISO 8601, ibland med Z
         return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
     except Exception:
         return datetime.utcnow()
@@ -40,24 +32,17 @@ def _parse_published(dt_str: str | None) -> datetime:
 def _norm(s: str) -> str:
     return (s or "").lower()
 
-# --- Inkluderings- och exkluderingsregler ---
-
-# Du ville INTE ha "barista/café"-jobb, men JA till pizzabagare
+# Inkludera bara restaurang/kök/matsal/bar (ej café/barista)
 INCLUDE_TERMS = [
-    # Kök
     r"\bkock\b", r"\bkockar\b", r"\brestaurangkock\b", r"\bköksbiträde\b",
     r"\bköksmästare\b", r"\bkökschef\b", r"\bsouschef\b", r"\b1:?e?\s*kock\b",
     r"\bförstekock\b", r"\bcommis\b", r"\bkallskänk(?:a)?\b", r"\bkökspersonal\b",
     r"\bvarmkök\b", r"\bkallkök\b",
-    # Pizza
     r"\bpizzabagare\b", r"\bpizzabakare\b",
-    # Matsal/bar
     r"\bservitör\b", r"\bservitris\b", r"\bserveringspersonal\b",
     r"\bhovmästare\b", r"\bsommelier\b", r"\bbartender\b", r"\bbarpersonal\b",
     r"\bbarchef\b", r"\brestaurangchef\b", r"\brestaurangvärd(?:inna)?\b",
 ]
-
-# Exkludera vanliga felträffar (teknik/IT/HR/handel osv.)
 EXCLUDE_TERMS = [
     r"\b(field\s*service|servicetekniker|tekniker|elektriker|mekaniker)\b",
     r"\b(it|support|help\s*desk|service\s*desk|nätverk|system(?:adm|utv|tekniker)?)\b",
@@ -67,25 +52,21 @@ EXCLUDE_TERMS = [
     r"\bfastighet(?:sskötare|stekniker)?\b|\bdrifttekniker\b",
     r"\bkoordinator\b|\bcoordinator\b|\bprojektledare\b",
     r"\benhetschef\b|\bverksamhetschef\b|\bplatschef\b(?!\s*restaurang)",
-    r"\bcafé\b|\bbarista\b",  # exkludera café/ barista
+    r"\bcafé\b|\bbarista\b",
     r"\bstäd\b|\blokalvård\b",
     r"\bsjuksköterska\b|\bundersköterska\b|\bvård\b",
 ]
-
 INCLUDE_RE = re.compile("|".join(INCLUDE_TERMS), re.I)
 EXCLUDE_RE = re.compile("|".join(EXCLUDE_TERMS), re.I)
 
 def _is_relevant(title: str, desc: str) -> bool:
     t = _norm(title)
     d = _norm(desc)
-    # Måste matcha minst en INKLUDERAD term i titel eller beskrivning
     if not (INCLUDE_RE.search(t) or INCLUDE_RE.search(d)):
         return False
-    # Får inte innehålla någon EXKLUDERAD term
     if EXCLUDE_RE.search(t) or EXCLUDE_RE.search(d):
         return False
-    # Särfall: engelska ordet "chef" (manager) ska inte ge falska träffar.
-    # Tillåt "kökschef", "restaurangchef", "barchef" (vilka redan täcks av INCLUDE_TERMS).
+    # Stäng ute "chef" (manager) om det inte är köks-/restaurang-/barchef
     if re.search(r"\bchef\b", t) and not re.search(r"\b(kökschef|restaurangchef|barchef)\b", t):
         return False
     return True
@@ -94,7 +75,6 @@ class AFProvider:
     name = "arbetsformedlingen"
 
     async def fetch(self, query: dict) -> AsyncIterator[Dict[str, Any]]:
-        # Bygg söksträng av roll-lista (om frontend skickar in det), annars bred restaurangfråga
         roles = query.get("roles", []) or []
         keywords: List[str] = []
         for r in roles:
@@ -102,8 +82,9 @@ class AFProvider:
         if keywords:
             q = " OR ".join(sorted(set(keywords)))
         else:
-            # Bred default för restaurang/kök/matsal/bar utan café/barista
-            q = "kock OR kök OR köksbiträde OR köksmästare OR souschef OR restaurang OR servering OR servitör OR servitris OR hovmästare OR bartender OR barpersonal OR pizzabagare"
+            q = ("kock OR kök OR köksbiträde OR köksmästare OR souschef OR restaurang "
+                 "OR servering OR servitör OR servitris OR hovmästare OR bartender "
+                 "OR barpersonal OR pizzabagare")
 
         params = {"q": q, "limit": 100}
         headers = {
@@ -134,22 +115,19 @@ class AFProvider:
             wp = (hit.get("workplace_addresses") or [{}])[0] or {}
             city = wp.get("municipality") or ""
             region = wp.get("region") or ""
-
             title = hit.get("headline") or ""
             desc_text = _flatten_description(hit)
 
-            # Klient-sidesfilter enligt dina önskemål
             if not _is_relevant(title, desc_text):
                 continue
 
-            job = {
+            yield {
                 "external_id": str(hit.get("id") or ""),
                 "title": title,
                 "employer": employer,
                 "city": city,
                 "region": region,
                 "published_at": _parse_published(hit.get("publication_date")),
-                "description": desc_text,  # alltid sträng (fix för tidigare DB-fel)
+                "description": desc_text,
                 "url": (hit.get("application_details") or {}).get("url") or hit.get("webpage_url") or "",
             }
-            yield job
