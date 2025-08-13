@@ -9,7 +9,7 @@ from .database import SessionLocal, engine, Base, init_db
 from .models import Job, Lead
 from .schemas import JobOut, LeadCreate, LeadOut
 from .crud import upsert_job
-from .providers import AFProvider
+from .providers.arbetsformedlingen import AFProvider
 from .settings import settings
 
 app = FastAPI(title="Platsannons API")
