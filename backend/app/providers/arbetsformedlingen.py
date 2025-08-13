@@ -78,10 +78,10 @@ class AFProvider(JobProvider):
             title = (hit.get("headline") or "").strip()
             title_l = title.lower()
 
-            # blocka ord som "chef", "hr", etc
+            # Blocka ord som "chef", "hr", etc
             if any(b in title_l.split() for b in TITLE_BLOCK):
                 continue
-            # kräver att någon tillåten term finns i titeln
+            # Kräv att någon tillåten term finns i titeln
             if not any(word in title_l for word in TITLE_ALLOW):
                 continue
 
@@ -102,3 +102,7 @@ class AFProvider(JobProvider):
                 "url": (hit.get("application_details") or {}).get("url") or hit.get("webpage_url") or "",
             })
         return jobs
+
+
+# Se till att AFProvider exporteras
+__all__ = ["AFProvider"]
