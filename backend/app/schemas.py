@@ -1,7 +1,8 @@
+# backend/app/schemas.py
 from pydantic import BaseModel
 from datetime import datetime
 
-class JobBase(BaseModel):
+class JobOut(BaseModel):
     id: int
     source: str
     external_id: str
@@ -14,9 +15,9 @@ class JobBase(BaseModel):
     url: str
 
     class Config:
-        from_attributes = True
+        from_attributes = True  # pydantic v2: gör att vi kan skapa från SQLAlchemy-objekt
 
-class LeadIn(BaseModel):
+class LeadCreate(BaseModel):
     job_id: int
     tier: str | None = None
     notes: str | None = None
@@ -24,8 +25,8 @@ class LeadIn(BaseModel):
 class LeadOut(BaseModel):
     id: int
     job_id: int
-    tier: str
-    notes: str
+    tier: str | None = None
+    notes: str | None = None
     created_at: datetime
     updated_at: datetime
 
