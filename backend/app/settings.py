@@ -1,12 +1,12 @@
-# File: backend/app/settings.py
-from pydantic import BaseSettings
+# backend/app/settings.py
+from pydantic_settings import BaseSettings
 from typing import Optional
 
 class Settings(BaseSettings):
     # DB
     database_url: str = "sqlite+aiosqlite:///./app.db"
 
-    # Admin auth for /api/admin endpoints
+    # Admin auth för /api/admin endpoints
     admin_token: str = "KOCKIN2025"
 
     # AF / Jobtech
