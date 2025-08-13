@@ -1,72 +1,78 @@
+# backend/app/main.py
+from __future__ import annotations
+import asyncio
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, List
-import asyncio
-import importlib
-
-from .database import Base, engine, SessionLocal
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from .database import SessionLocal, engine, Base, init_db
+from .models import Job, Lead
+from .schemas import JobOut, LeadCreate, LeadOut
 from .crud import upsert_job
-from .models import Job
+from .providers import AFProvider
+from .settings import settings
 
-# === Konfig ===
-ADMIN_TOKEN = "KOCKIN2025"  # byt gärna till env-variabel senare
+app = FastAPI(title="Platsannons API")
 
-app = FastAPI(title="Platsannons")
-
-# CORS – tillåt frontend på vilken domän du kör
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # snällt läge just nu
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Skapa tabeller om de saknas
-Base.metadata.create_all(bind=engine)
+async def get_session() -> AsyncSession:
+    async with SessionLocal() as session:
+        yield session
 
-# Hjälpfunktion: ladda providers dynamiskt
-def load_providers():
-    module_paths = [
-        "app.providers.arbetsformedlingen",
-    ]
-    providers = []
-    for path in module_paths:
-        mod = importlib.import_module(path)
-        providers.append(mod)
-    return providers
+@app.on_event("startup")
+async def on_startup():
+    # Skapa tabeller med AsyncEngine
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await init_db()
 
-# Health
-@app.get("/")
-def health():
-    return {"ok": True, "service": "platsannons"}
+@app.get("/api/health")
+async def health():
+    return {"ok": True}
 
-# Admin: trigger harvest manuellt
-@app.post("/api/admin/harvest")
-async def admin_harvest(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-    token = authorization.split(" ", 1)[1].strip()
-    if token != ADMIN_TOKEN:
+# --- Jobs ------------------------------------------------------------------
+@app.get("/api/jobs", response_model=list[JobOut])
+async def list_jobs(session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(Job).order_by(Job.published_at.desc()).limit(200))
+    return list(res.scalars())
+
+# --- Leads -----------------------------------------------------------------
+@app.post("/api/leads", response_model=LeadOut)
+async def create_lead(payload: LeadCreate, session: AsyncSession = Depends(get_session)):
+    job = await session.get(Job, payload.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    obj = Lead(job_id=payload.job_id, tier=payload.tier, notes=payload.notes)
+    session.add(obj)
+    await session.commit()
+    await session.refresh(obj)
+    return obj
+
+# --- Admin: Harvest --------------------------------------------------------
+def require_admin(auth: str | None) -> None:
+    if not auth or not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    token = auth.split(" ", 1)[1]
+    if token != settings.admin_token:
         raise HTTPException(status_code=403, detail="Invalid token")
 
-    providers = load_providers()
+@app.post("/api/admin/harvest")
+async def admin_harvest(Authorization: str | None = Header(default=None)):
+    require_admin(Authorization)
+    provider = AFProvider()
 
-    async def handle_provider(provider_module):
-        provider_name = getattr(provider_module, "PROVIDER_NAME",
-                                provider_module.__name__.rsplit(".", 1)[-1])
-        jobs: List[dict] = await provider_module.fetch({})
-        with SessionLocal() as session:
-            for job in jobs:
-                upsert_job(session, provider_name, job)
-
-    await asyncio.gather(*(handle_provider(p) for p in providers))
-    return {"ok": True, "counts": {"arbetsformedlingen": 0}}  # count kan byggas ut senare
-
-# (Valfritt) enkel endpoint för att lista jobb
-@app.get("/api/jobs")
-def list_jobs(limit: int = 50, offset: int = 0):
-    with SessionLocal() as session:
-        q = session.query(Job).order_by(Job.published_at.desc()).offset(offset).limit(limit)
-        items = [j.to_dict() for j in q.all()]
-    return {"items": items, "count": len(items)}
+    async with SessionLocal() as session:
+        jobs = await provider.fetch()
+        saved = 0
+        for job in jobs:
+            await upsert_job(session, job)
+            saved += 1
+        await session.commit()
+    return {"ok": True, "counts": {provider.name: saved}}
