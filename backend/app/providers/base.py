@@ -1,6 +1,14 @@
-from typing import Dict, List
+from typing import Dict, List, Any
 
-# Kartläggning från UI-roll -> sökord mot AF
+class JobProvider:
+    name: str = "base"
+
+    async def fetch(self) -> List[Dict[str, Any]]:  # ska implementeras av providers
+        raise NotImplementedError
+
+
+# (Frivillig) kartläggning från UI-roll -> sökord mot AF.
+# Ligger kvar här för ev. framtida behov.
 ROLE_KEYWORDS: Dict[str, List[str]] = {
     "kock": [
         "kock", "kockar", "restaurangkock", "köksbiträde", "köksmästare",
