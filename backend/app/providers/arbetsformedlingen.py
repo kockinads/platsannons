@@ -12,23 +12,11 @@ from ..settings import settings
 log = logging.getLogger("uvicorn.error")
 
 # Blockera titlar som innehåller "chef" (t.ex. kökschef, restaurangchef, barchef)
-TITLE_BLOCK = ["chef"]
+TITLE_BLOCK = []
 
 # Sökord – undvik kolon och andra tecken som kan ge 400 på Jobtech API.
 # (t.ex. "1:e kock" tas bort)
-KEYWORDS = [
-    "kock", "kockar", "restaurangkock",
-    "köksbiträde", "köksmästare", "souschef",
-    "kallskänk", "kallskänka",
-    "kökspersonal", "matlagning",
-    "restaurangkök", "varmkök", "kallkök",
-    "pizzabagare", "pizzabakare",
-    "servitör", "servitris", "serveringspersonal",
-    "hovmästare",
-    "bartender", "barpersonal",
-    "sommelier",
-    # Vi skippar "restaurangchef", "barchef", "kökschef" osv pga TITLE_BLOCK ändå
-]
+KEYWORDS = ["kock"]
 
 def _flatten_description(hit: Dict[str, Any]) -> str:
     desc = hit.get("description")
