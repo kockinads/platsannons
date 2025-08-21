@@ -1,10 +1,15 @@
 # backend/app/main.py
 from __future__ import annotations
 import asyncio
+import logging
+from typing import Optional
+
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from .database import SessionLocal, engine, Base, init_db
 from .models import Job, Lead
 from .schemas import JobOut, LeadCreate, LeadOut
@@ -12,27 +17,33 @@ from .crud import upsert_job
 from .providers.arbetsformedlingen import AFProvider
 from .settings import settings
 
+log = logging.getLogger("uvicorn.error")
+
 app = FastAPI(title="Platsannons API")
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # justera vid behov
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# DB-session per request
 async def get_session() -> AsyncSession:
     async with SessionLocal() as session:
         yield session
 
+# Skapa tabeller vid start
 @app.on_event("startup")
 async def on_startup():
-    # Skapa tabeller med AsyncEngine
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await init_db()
+    log.info("Startup complete: DB ready")
 
+# Healthcheck
 @app.get("/api/health")
 async def health():
     return {"ok": True}
@@ -56,7 +67,7 @@ async def create_lead(payload: LeadCreate, session: AsyncSession = Depends(get_s
     return obj
 
 # --- Admin: Harvest --------------------------------------------------------
-def require_admin(auth: str | None) -> None:
+def require_admin(auth: Optional[str]) -> None:
     if not auth or not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = auth.split(" ", 1)[1]
@@ -76,3 +87,8 @@ async def admin_harvest(Authorization: str | None = Header(default=None)):
             saved += 1
         await session.commit()
     return {"ok": True, "counts": {provider.name: saved}}
+
+# --- Frontend (static) -----------------------------------------------------
+# Servera frontend-bygget som ligger i /static (kopieras dit i Dockerfile)
+# html=True gör att index.html returneras för / och alla okända paths -> SPA-stöd
+app.mount("/", StaticFiles(directory="static", html=True), name="frontend")
