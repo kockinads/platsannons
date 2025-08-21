@@ -12,7 +12,7 @@ class JobProvider:
 ROLE_KEYWORDS: Dict[str, List[str]] = {
     "kock": [
         "kock", "kockar", "restaurangkock", "köksbiträde", "köksmästare",
-        "kökschef", "souschef", "1:e kock", "förstekock", "commis", "kallskänk",
+        "kökschef", "souschef", "förstekock", "commis", "kallskänk",
         "kallskänka", "kökspersonal", "matlagning", "restaurangkök", "varmkök", "kallkök",
         "pizzabagare", "pizzabakare"
     ],
