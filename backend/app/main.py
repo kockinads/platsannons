@@ -1,45 +1,65 @@
+# File: backend/app/main.py
 from __future__ import annotations
 
-from fastapi import FastAPI, Depends, HTTPException, Header
+import asyncio
+from typing import Optional
+
+from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func
+from starlette.staticfiles import StaticFiles
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from .database import SessionLocal, engine, Base, init_db
 from .models import Job, Lead
 from .schemas import JobOut, LeadCreate, LeadOut
 from .crud import upsert_job
-from .providers.arbetsformedlingen import AFProvider
 from .settings import settings
+from .providers.arbetsformedlingen import AFProvider
+
 
 app = FastAPI(title="Platsannons API")
 
+# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # justera vid behov
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- DB session dependency ---
 async def get_session() -> AsyncSession:
     async with SessionLocal() as session:
         yield session
 
+# --- Startup: skapa tabeller & initiera DB ---
 @app.on_event("startup")
 async def on_startup():
+    # Skapa tabeller (SQLAlchemy 2.x + AsyncEngine korrekt sätt)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await init_db()
+    print("Startup complete: DB ready")
 
+# --- Healthcheck ---
 @app.get("/api/health")
 async def health():
     return {"ok": True}
 
 # --- Jobs ------------------------------------------------------------------
 @app.get("/api/jobs", response_model=list[JobOut])
-async def list_jobs(session: AsyncSession = Depends(get_session)):
-    res = await session.execute(select(Job).order_by(Job.published_at.desc()).limit(500))
-    return list(res.scalars())
+async def list_jobs(
+    hide_recruiters: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+):
+    # Just nu ignorerar vi hide_recruiters i servern; frontend kan filtrera själv.
+    res = await session.execute(
+        select(Job).order_by(Job.published_at.desc()).limit(500)
+    )
+    jobs = list(res.scalars())
+    return jobs
 
 # --- Leads -----------------------------------------------------------------
 @app.post("/api/leads", response_model=LeadOut)
@@ -53,8 +73,8 @@ async def create_lead(payload: LeadCreate, session: AsyncSession = Depends(get_s
     await session.refresh(obj)
     return obj
 
-# --- Admin helpers ----------------------------------------------------------
-def require_admin(auth: str | None) -> None:
+# --- Admin: Harvest --------------------------------------------------------
+def require_admin(auth: Optional[str]) -> None:
     if not auth or not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = auth.split(" ", 1)[1]
@@ -64,11 +84,12 @@ def require_admin(auth: str | None) -> None:
 @app.post("/api/admin/harvest")
 async def admin_harvest(Authorization: str | None = Header(default=None)):
     require_admin(Authorization)
+
     provider = AFProvider()
 
-    # provider.fetch() är synkron → kör i trådpool så vi inte blockerar eventloopen
-    from asyncio import to_thread
-    jobs = await to_thread(provider.fetch)
+    # Tillåt både sync och async fetch() (beroende på hur klassen är implementerad)
+    maybe_coro = provider.fetch()
+    jobs = await maybe_coro if asyncio.iscoroutine(maybe_coro) else maybe_coro
 
     saved = 0
     async with SessionLocal() as session:
@@ -76,11 +97,11 @@ async def admin_harvest(Authorization: str | None = Header(default=None)):
             await upsert_job(session, job)
             saved += 1
         await session.commit()
-    return {"ok": True, "counts": {provider.name: saved}}
 
-@app.get("/api/admin/stats")
-async def admin_stats(Authorization: str | None = Header(default=None)):
-    require_admin(Authorization)
-    async with SessionLocal() as session:
-        total_jobs = (await session.execute(select(func.count()).select_from(Job))).scalar_one()
-    return {"ok": True, "jobs": total_jobs}
+    # Använd strängnyckel så vi inte är beroende av provider.name-attribut
+    return {"ok": True, "counts": {"arbetsformedlingen": saved}}
+
+# --- Static frontend --------------------------------------------------------
+# Servera Vite-bygget från ./static (kopieras dit i Dockerfile)
+# Lägg denna mount SIST så att /api/*-rutter matchas först.
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
